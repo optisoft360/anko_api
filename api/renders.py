@@ -5,8 +5,8 @@ import hashlib
 import logging
 from typing import Optional
 
-from django.conf import settings
 from rest_framework.renderers import JSONRenderer
+from rest_framework.utils.encoders import JSONEncoder
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from api.renderers import translate_data_if_needed
@@ -71,6 +71,7 @@ def encrypt_payload(data_obj, *, token: str) -> dict:
 
     plaintext = json.dumps(
         data_obj,
+        cls=JSONEncoder,
         separators=(",", ":"),
         ensure_ascii=False,
     ).encode("utf-8")
@@ -78,10 +79,8 @@ def encrypt_payload(data_obj, *, token: str) -> dict:
     ciphertext = aesgcm.encrypt(nonce, plaintext, None)
 
     return {
-        
         "_n": _b64url_encode(nonce),
         "_t": _b64url_encode(ciphertext),
-
     }
 
 

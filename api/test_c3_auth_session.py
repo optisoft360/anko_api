@@ -10,6 +10,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
 from api.models import User
+from api.serializers import UserSerializer
 
 STRONG = "x" * 40
 
@@ -87,13 +88,43 @@ class LoginUsernameCaseTests(APITestCase):
     def login(self, username):
         return self.client.post("/api/auth/login/", {"username": username, "password": "Pass123!"}, format="json")
 
-    def test_username_must_match_exactly(self):
-        self.assertEqual(self.login("andersanchez").status_code, 200)
-        for wrong in ("Andersanchez", "ANDERSANCHEZ"):
-            r = self.login(wrong)
-            self.assertEqual(r.status_code, 400, wrong)
-            self.assertEqual(r.json().get("error"), "Invalid credentials")
+    def test_username_login_is_case_insensitive(self):
+        for candidate in ("andersanchez", "Andersanchez", "ANDERSANCHEZ"):
+            r = self.login(candidate)
+            self.assertEqual(r.status_code, 200, candidate)
 
     def test_email_login_stays_case_insensitive(self):
         self.assertEqual(self.login("ander@test.com").status_code, 200)
         self.assertEqual(self.login("ANDER@TEST.COM").status_code, 200)
+
+class UsernameUniquenessCaseTests(APITestCase):
+    def test_registration_rejects_username_that_differs_only_by_case(self):
+        User.objects.create_user("andersanchez", "ander@test.com", "Pass123!")
+
+        serializer = UserSerializer(data={
+            "username": "AnderSanchez",
+            "email": "other@test.com",
+            "password": "Pass123!",
+            "first_name": "Ander",
+            "last_name": "Two",
+        })
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("username", serializer.errors)
+
+    def test_update_allows_same_username_with_same_case_for_same_user(self):
+        user = User.objects.create_user("andersanchez", "ander@test.com", "Pass123!")
+
+        serializer = UserSerializer(
+            user,
+            data={
+                "username": "andersanchez",
+                "email": "ander@test.com",
+                "first_name": "Ander",
+                "last_name": "Same",
+            },
+            partial=True,
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+

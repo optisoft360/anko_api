@@ -24,6 +24,15 @@ class User(AbstractUser):
      # Nuevo (opcional): RBAC
     roles = models.ManyToManyField("Role", blank=True, related_name="users", through="UserRole")
 
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                models.functions.Lower("username"),
+                name="uniq_user_username_ci",
+            ),
+        ]
+
     def __str__(self):
         return self.username
 
