@@ -73,3 +73,27 @@ class LoginThrottleTests(APITestCase):
                                       REMOTE_ADDR=ip).status_code for _ in range(5)]
         self.assertIn(429, codes)
         self.assertNotEqual(codes[0], 429)
+
+
+class LoginUsernameCaseTests(APITestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()  # the login throttle counts per IP: start and leave it empty
+        self.addCleanup(cache.clear)
+        self.user = User.objects.create_user("andersanchez", "ander@test.com", "Pass123!")
+        self.user.email_verified = True
+        self.user.save(update_fields=["email_verified"])
+
+    def login(self, username):
+        return self.client.post("/api/auth/login/", {"username": username, "password": "Pass123!"}, format="json")
+
+    def test_username_must_match_exactly(self):
+        self.assertEqual(self.login("andersanchez").status_code, 200)
+        for wrong in ("Andersanchez", "ANDERSANCHEZ"):
+            r = self.login(wrong)
+            self.assertEqual(r.status_code, 400, wrong)
+            self.assertEqual(r.json().get("error"), "Invalid credentials")
+
+    def test_email_login_stays_case_insensitive(self):
+        self.assertEqual(self.login("ander@test.com").status_code, 200)
+        self.assertEqual(self.login("ANDER@TEST.COM").status_code, 200)
