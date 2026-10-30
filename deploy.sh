@@ -7,6 +7,9 @@ BRANCH="${BRANCH:-main}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 PORTS_TO_FREE="${PORTS_TO_FREE:-8000}"
 REQUIRED_NETWORK="${REQUIRED_NETWORK:-hope_default}"
+LOG_TAIL_LINES="${LOG_TAIL_LINES:-120}"
+API_CONTAINER_NAME="${API_CONTAINER_NAME:-anko-api}"
+WORKER_CONTAINER_NAME="${WORKER_CONTAINER_NAME:-anko-workflow-progress-worker}"
 
 cd "$APP_DIR"
 
@@ -15,6 +18,8 @@ echo "[deploy] branch: $BRANCH"
 echo "[deploy] compose file: $COMPOSE_FILE"
 echo "[deploy] ports to free: $PORTS_TO_FREE"
 echo "[deploy] required network: $REQUIRED_NETWORK"
+echo "[deploy] log tail lines: $LOG_TAIL_LINES"
+echo "[deploy] cleaning untracked files: yes"
 
 free_port() {
   local port="$1"
@@ -73,10 +78,34 @@ ensure_network() {
   docker network create "$REQUIRED_NETWORK" >/dev/null
 }
 
+print_container_logs() {
+  local container_name="$1"
+  [ -n "$container_name" ] || return 0
+
+  if ! docker ps -a --format '{{.Names}}' | grep -Fx "$container_name" >/dev/null 2>&1; then
+    echo "[deploy] container $container_name not found for log tail"
+    return 0
+  fi
+
+  echo "[deploy] showing last $LOG_TAIL_LINES log lines for $container_name"
+  docker logs --tail "$LOG_TAIL_LINES" "$container_name" || true
+}
+
+run_migration_preflight() {
+  echo "[deploy] running migration preflight"
+  if ! docker compose -f "$COMPOSE_FILE" run --rm --no-deps api python manage.py migrate --plan; then
+    echo "[deploy] migration preflight failed"
+    echo "[deploy] if the error is a conflicting migration graph, run ./merge_migrations.sh locally, commit the generated merge migration, then deploy again"
+    return 1
+  fi
+}
+
 git fetch origin "$BRANCH"
 git reset --hard "origin/$BRANCH"
+git clean -fd
 
 ensure_network
+run_migration_preflight
 
 docker compose -f "$COMPOSE_FILE" down --remove-orphans || true
 
@@ -85,6 +114,9 @@ for port in $PORTS_TO_FREE; do
 done
 
 docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans
+
+print_container_logs "$API_CONTAINER_NAME"
+print_container_logs "$WORKER_CONTAINER_NAME"
 
 docker image prune -f
 
