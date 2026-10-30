@@ -143,6 +143,29 @@ from api.services.progressfc_ws import ws_get_latest_progress  # ajusta import
 from api.utils.logging import get_logger
 SECRET_TOKEN = "andelef"
 logger = get_logger(__name__)
+
+
+def _log_public_exception(message: str, exc: Exception, **context):
+    if context:
+        logger.exception("%s | context=%s", message, context, exc_info=exc)
+    else:
+        logger.exception(message, exc_info=exc)
+
+
+def _public_error_payload(detail: str, code: str | None = None, **extra):
+    payload = {"detail": detail}
+    if code:
+        payload["code"] = code
+    payload.update(extra)
+    return payload
+
+
+def _sse_error_event(code: str, detail: str | None = None, **extra):
+    payload = {"error": code}
+    if detail:
+        payload["detail"] = detail
+    payload.update(extra)
+    return f"event: error\ndata: {json.dumps(payload)}\n\n"
 INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", SECRET_TOKEN)
 
 
@@ -1035,6 +1058,7 @@ class ProjectViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
             return Response(resp_payload, status=status.HTTP_200_OK)
 
         except Exception as exc:
+            logger.exception("ask workflow websocket transport failed session_id=%s", session_id)
             # 2) fallback HTTP
             http_result = _ask_via_http(base_url, payload)
 
@@ -1054,7 +1078,7 @@ class ProjectViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
                     "job_id": job_id,
                     "ws_url": _build_ws_url_for_progress(base_url, job_id) if job_id else None,
                     "http": http_result,
-                    "ws_error": str(exc),
+                    "ws_error": "WebSocket connection failed.",
                 },
                 status=status.HTTP_200_OK if http_result.get("ok") else status.HTTP_502_BAD_GATEWAY,
             )
@@ -1090,7 +1114,7 @@ class ProjectViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
                 ws = create_connection(ws_url, timeout=20)
             except Exception as e:
                 logger.error("WS connect failed for job_id %s: %s", job_id, e)
-                yield f"event: error\ndata: {json.dumps({'error': 'failed_to_connect_ws', 'detail': str(e)})}\n\n"
+                yield _sse_error_event('failed_to_connect_ws')
                 return
 
             TERMINAL = {"COMPLETED", "DONE", "FINISHED", "SUCCESS", "FAILED", "ERROR"}
@@ -1109,7 +1133,7 @@ class ProjectViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
                         break
                     except Exception as e:
                         logger.error("WS recv error for job_id %s: %s", job_id, e)
-                        yield f"event: error\ndata: {json.dumps({'error': 'ws_recv_failed', 'detail': str(e)})}\n\n"
+                        yield _sse_error_event('ws_recv_failed')
                         break
 
                     try:
@@ -1781,7 +1805,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
                     "detail": "Could not delete the file from Supabase storage.",
                     "document_id": doc.id,
                     "file_key": file_key,
-                    "error": str(exc),
+                    "error": "Storage deletion request failed.",
                 },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
@@ -2897,7 +2921,7 @@ class BatteryViewSet(EncryptSelectedActionsMixin,viewsets.ModelViewSet):
                 )
             except Exception as exc:
                 return Response(
-                    {"detail": "Failed translating battery questions to Spanish.", "error": str(exc)},
+                    _public_error_payload("Failed translating battery questions to Spanish.", code="translation_failed"),
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
             if isinstance(translated, list) and len(translated) == len(to_translate):
@@ -3054,8 +3078,9 @@ class BatteryViewSet(EncryptSelectedActionsMixin,viewsets.ModelViewSet):
                 resource_id=battery.id,
             )
         except Exception as exc:
+            _log_public_exception("Failed saving PDF decryption key", exc, document_id=document.id if document else None)
             return Response(
-                {"detail": "Failed saving PDF decryption key.", "error": str(exc)},
+                _public_error_payload("Failed saving PDF decryption key.", code="pdf_key_save_failed"),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -4005,7 +4030,7 @@ class BatteryViewSet(EncryptSelectedActionsMixin,viewsets.ModelViewSet):
                         yield f"event: ping\ndata: {json.dumps({'waiting': True, 'attempt': attempt + 1})}\n\n"
                         time.sleep(RETRY_DELAY)
                         continue
-                    yield f"event: error\ndata: {json.dumps({'error': 'failed_to_connect_ws', 'detail': str(e)})}\n\n"
+                    yield _sse_error_event('failed_to_connect_ws')
                     return
 
                 ws_closed_early = False
@@ -4024,7 +4049,7 @@ class BatteryViewSet(EncryptSelectedActionsMixin,viewsets.ModelViewSet):
                             ws_closed_early = True
                             break
                         except Exception as e:
-                            yield f"event: error\ndata: {json.dumps({'error': 'ws_recv_failed', 'detail': str(e)})}\n\n"
+                            yield _sse_error_event('ws_recv_failed')
                             is_done = True
                             break
 
@@ -4295,7 +4320,7 @@ class BatteryViewSet(EncryptSelectedActionsMixin,viewsets.ModelViewSet):
             publish_run_event(process_run, event="process_run.updated")
             cleanup_empty_generated_battery(battery=battery)
             return Response(
-                {"detail": "Failed calling microservice", "error": str(e)},
+                _public_error_payload("Failed calling microservice", code="microservice_call_failed"),
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
@@ -5608,7 +5633,8 @@ class DeckViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
             try:
                 ws = create_connection(ws_url, timeout=20)
             except Exception as e:
-                yield f"event: error\ndata: {json.dumps({'error': 'failed_to_connect_ws', 'detail': str(e), 'ws_url': ws_url})}\n\n"
+                _log_public_exception("Failed to connect deck websocket", e, ws_url=ws_url, deck_id=deck.id, job_id=job_id)
+                yield _sse_error_event('failed_to_connect_ws', ws_url=ws_url)
                 return
 
             last_keepalive = time.time()
@@ -5625,7 +5651,8 @@ class DeckViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
                         yield f"event: end\ndata: {json.dumps({'status': 'ws_closed'})}\n\n"
                         break
                     except Exception as e:
-                        yield f"event: error\ndata: {json.dumps({'error': 'ws_recv_failed', 'detail': str(e)})}\n\n"
+                        _log_public_exception("Battery websocket receive failed", e, ws_url=ws_url, battery_id=battery.id, job_id=job_id)
+                        yield _sse_error_event('ws_recv_failed')
                         break
 
                     try:
@@ -5757,7 +5784,7 @@ class DeckViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
                 )
             except Exception as exc:
                 return Response(
-                    {"detail": "Failed translating flashcards to Spanish.", "error": str(exc)},
+                    _public_error_payload("Failed translating flashcards to Spanish.", code="translation_failed"),
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
 
@@ -6117,8 +6144,9 @@ class DeckViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
                 resource_id=deck.id,
             )
         except Exception as exc:
+            _log_public_exception("Failed saving PDF decryption key", exc, document_id=document.id if document else None)
             return Response(
-                {"detail": "Failed saving PDF decryption key.", "error": str(exc)},
+                _public_error_payload("Failed saving PDF decryption key.", code="pdf_key_save_failed"),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -6758,7 +6786,7 @@ class DeckViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
             publish_run_event(process_run, event="process_run.updated")
             cleanup_empty_generated_deck(deck=deck)
             return Response(
-                {"detail": "Failed calling microservice", "error": str(e)},
+                _public_error_payload("Failed calling microservice", code="microservice_call_failed"),
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
@@ -6936,7 +6964,7 @@ class DeckViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
             svc_data = resp.json()
         except requests.RequestException as e:
             return Response(
-                {"detail": "Failed calling flashcards service", "error": str(e)},
+                _public_error_payload("Failed calling flashcards service", code="flashcards_service_failed"),
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         
@@ -7314,7 +7342,7 @@ class DeckViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
         except requests.RequestException as e:
             # Como está en transaction.atomic, al devolver error se hace rollback del deck
             return Response(
-                {"detail": "Failed calling flashcards service", "error": str(e)},
+                _public_error_payload("Failed calling flashcards service", code="flashcards_service_failed"),
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
@@ -7929,7 +7957,7 @@ class FlashcardViewSet(EncryptSelectedActionsMixin,viewsets.ModelViewSet):
         try:
             payload = learn_session.start_or_resume(user=request.user, deck=deck, job_id=job_id, request=request)
         except ValueError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+            return Response(_public_error_payload("Request conflicts with current state.", code="conflict"), status=status.HTTP_409_CONFLICT)
         return self._learn_response(payload)
 
     @action(detail=False, methods=["post"], url_path="ws-push-feedback", permission_classes=[IsAuthenticated])
@@ -9207,7 +9235,7 @@ class ProcessRunViewSet(viewsets.ReadOnlyModelViewSet):
         try:
             normalized = normalize_auto_generate_request(request.data or {})
         except AutoGenerateWorkflowError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(_public_error_payload(str(exc), code="invalid_request"), status=status.HTTP_400_BAD_REQUEST)
 
         document_ids = normalized["document_ids"]
         docs_qs = Document.objects.select_related("project", "collection", "uploaded_by").filter(id__in=document_ids)
@@ -9246,7 +9274,7 @@ class ProcessRunViewSet(viewsets.ReadOnlyModelViewSet):
                 payload=normalized,
             )
         except AutoGenerateWorkflowError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(_public_error_payload(str(exc), code="invalid_request"), status=status.HTTP_400_BAD_REQUEST)
 
         publish_run_event(process_run, event="process_run.updated")
 
@@ -9255,18 +9283,19 @@ class ProcessRunViewSet(viewsets.ReadOnlyModelViewSet):
 
             orchestrate_auto_generate_run_task.delay(process_run.id)
         except Exception as exc:
+            _log_public_exception("Failed to enqueue auto generation", exc, process_run_id=process_run.id)
             recompute_run_progress(
                 run=process_run,
                 status=ProcessRun.Status.FAILED,
                 current_step_key="process_document",
                 current_stage="process_document",
                 status_message="Failed to enqueue auto generation",
-                error_payload={"error": str(exc)},
+                error_payload={"error": "Failed to enqueue auto generation"},
                 finished_at=timezone.now(),
             )
             publish_run_event(process_run, event="process_run.updated")
             return Response(
-                {"detail": "Failed to enqueue auto generation", "error": str(exc)},
+                _public_error_payload("Failed to enqueue auto generation", code="enqueue_failed"),
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 

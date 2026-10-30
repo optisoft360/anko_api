@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
+from api.enterprise.error_handling import company_access_denied
 from api.models import Role
 from api.enterprise.services.security_service import validate_company_access
 
@@ -38,7 +39,7 @@ def require_permission(user, company_id, resource_key: str, action: str = "manag
     try:
         membership = validate_company_access(user, company_id)
     except PermissionError as exc:
-        raise PermissionDenied(str(exc))
+        raise company_access_denied(exc, user_id=user.id, company_id=company_id)
     if not has_permission(membership.role, resource_key, action):
         raise PermissionDenied(
             f"This action requires the '{resource_key}:{action}' permission."

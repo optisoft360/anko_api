@@ -14,6 +14,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from api.enterprise.error_handling import company_access_denied
 from api.enterprise.services.learning_service import EnterpriseLearningService
 from api.enterprise.services.security_service import validate_company_access
 from api.enterprise.services.rbac_service import require_permission, has_permission
@@ -135,7 +136,7 @@ class EnterpriseViewSetMixin:
         try:
             membership = validate_company_access(self.request.user, company_id)
         except PermissionError as exc:
-            raise PermissionDenied(str(exc))
+            raise company_access_denied(exc, user_id=self.request.user.id, company_id=company_id)
         if allowed_roles and membership.role not in allowed_roles:
             raise PermissionDenied(
                 f"This action requires one of: {', '.join(allowed_roles)}."

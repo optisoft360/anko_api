@@ -10,6 +10,7 @@ from rest_framework.response import Response
 
 from api.throttles import AIGenerationUserRateThrottle, with_default_throttles
 
+from api.enterprise.error_handling import company_access_denied, generic_validation_error
 from api.enterprise.services.document_intelligence_service import (
     DocumentIntelligenceService,
 )
@@ -215,7 +216,7 @@ class KnowledgeSourceViewSet(EnterpriseViewSetMixin, viewsets.ViewSet):
         try:
             membership = validate_company_access(self.request.user, company_id)
         except PermissionError as exc:
-            raise PermissionDenied(str(exc))
+            raise company_access_denied(exc, user_id=self.request.user.id, company_id=company_id)
         from api.enterprise_models import Company
         company = Company.objects.get(id=company_id)
         return company, membership
@@ -609,7 +610,14 @@ class KnowledgeSourceViewSet(EnterpriseViewSetMixin, viewsets.ViewSet):
         try:
             program = DocumentIntelligenceService.generate_training_program(ks.pk)
         except ValueError as exc:
-            raise ValidationError({"detail": str(exc)})
+            raise generic_validation_error(
+                exc,
+                log_message="Training generation failed",
+                detail="The training program could not be generated.",
+                user_id=request.user.id,
+                knowledge_source_id=ks.id,
+                company_id=company.id,
+            )
 
         from api.enterprise.serializers.learning import TrainingProgramSerializer
         return Response(TrainingProgramSerializer(program).data, status=201)
@@ -655,7 +663,7 @@ class ProcedureViewSet(EnterpriseViewSetMixin, viewsets.ViewSet):
         try:
             validate_company_access(self.request.user, company_id)
         except PermissionError as exc:
-            raise PermissionDenied(str(exc))
+            raise company_access_denied(exc, user_id=self.request.user.id, company_id=company_id)
         from api.enterprise_models import Company
         return Company.objects.get(id=company_id)
 
@@ -710,7 +718,7 @@ class ChangeImpactAnalysisViewSet(EnterpriseViewSetMixin, viewsets.ViewSet):
         try:
             membership = validate_company_access(self.request.user, company_id)
         except PermissionError as exc:
-            raise PermissionDenied(str(exc))
+            raise company_access_denied(exc, user_id=self.request.user.id, company_id=company_id)
         from api.enterprise_models import Company
         return Company.objects.get(id=company_id), membership
 
@@ -783,7 +791,15 @@ class ChangeImpactAnalysisViewSet(EnterpriseViewSetMixin, viewsets.ViewSet):
                 change_analysis_id=analysis.pk,
             )
         except Exception as exc:
-            raise ValidationError({"detail": str(exc)})
+            raise generic_validation_error(
+                exc,
+                log_message="Training regeneration failed",
+                detail="The training program could not be regenerated.",
+                user_id=request.user.id,
+                knowledge_source_id=analysis.knowledge_source_id,
+                change_analysis_id=analysis.id,
+                company_id=company.id,
+            )
 
         from api.enterprise.serializers.learning import TrainingProgramSerializer
         return Response({
@@ -815,7 +831,7 @@ class KnowledgeGraphViewSet(EnterpriseViewSetMixin, viewsets.ViewSet):
         try:
             validate_company_access(self.request.user, company_id)
         except PermissionError as exc:
-            raise PermissionDenied(str(exc))
+            raise company_access_denied(exc, user_id=self.request.user.id, company_id=company_id)
         from api.enterprise_models import Company
         return Company.objects.get(id=company_id)
 

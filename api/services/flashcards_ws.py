@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import uuid
 
@@ -17,6 +18,8 @@ BASE_WS = os.getenv("FLASHCARD_WS_BASE", "ws://localhost:8080/ws/flashcards")
 # There is no "Again" level. Answers slower than 10 s are downgraded one level by the service.
 RATING_HARD, RATING_GOOD, RATING_EASY = 0, 1, 2
 VALID_RATINGS = (RATING_HARD, RATING_GOOD, RATING_EASY)
+
+logger = logging.getLogger(__name__)
 
 
 def _ws_url(job_id: str) -> str:
@@ -72,8 +75,9 @@ async def ws_get_next_card(*, job_id: str, user_id: str, last_seq: int = 0, toke
 
     except ws_exceptions.ConnectionClosed as exc:
         return {"message_type": "ws_closed", "code": exc.code, "reason": exc.reason}
-    except Exception as exc:
-        return {"message_type": "ws_error", "detail": str(exc)}
+    except Exception:
+        logger.exception("flashcards ws_get_next_card failed")
+        return {"message_type": "ws_error", "detail": "WebSocket request failed."}
 
 
 async def ws_send_card_feedback(
@@ -148,5 +152,6 @@ async def ws_send_card_feedback(
         return {"message_type": "timeout"}
     except ws_exceptions.ConnectionClosed as exc:
         return {"message_type": "ws_closed", "code": exc.code, "reason": exc.reason}
-    except Exception as exc:
-        return {"message_type": "ws_error", "detail": str(exc)}
+    except Exception:
+        logger.exception("flashcards ws_send_card_feedback failed")
+        return {"message_type": "ws_error", "detail": "WebSocket request failed."}
