@@ -1222,10 +1222,10 @@ class ProjectViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
                 status=status.HTTP_200_OK,
             )
 
-        except requests.RequestException as e:
-            
+        except requests.RequestException as exc:
+            _log_public_exception("Project processing request failed", exc, project_id=pk, user_id=request.user.id)
             return Response(
-                {"success": False, "error": str(e)},
+                _public_error_payload("Processing service request failed.", code="processing_service_failed", success=False),
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
@@ -1483,8 +1483,9 @@ class ProjectViewSet(EncryptSelectedActionsMixin, viewsets.ModelViewSet):
                         stored_file_path=stored_path,
                         doc_id=external_doc_id,
                     )
-                except Exception as e:
-                    external_data = {"success": False, "error": str(e)}
+                except Exception as exc:
+                    _log_public_exception("Document external processing failed", exc, document_id=doc.id, user_id=request.user.id)
+                    external_data = _public_error_payload("Document processing could not be started.", code="document_processing_failed", success=False)
                     ws_url = None
 
                 processing.append(
@@ -2001,13 +2002,13 @@ class DocumentViewSet(viewsets.ModelViewSet):
                     files=[fake_file]   # o la lista real
                   
                 )
-            except PermissionDenied as e:
+            except PermissionDenied:
                 logger.info("doc_register plan_limit user_id=%s project_id=%s", request.user.id, project_id)
                 return Response(
                     {
                         "ok": False,
                         "error_code": "PLAN_LIMIT",
-                        "detail": str(e),
+                        "detail": "Upload limit reached for your plan.",
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
@@ -2084,10 +2085,10 @@ class DocumentViewSet(viewsets.ModelViewSet):
 
             ws_base = base_url.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
             ws_url = f"{ws_base}/ws/progress/{job_id}"
-        except Exception as e:
-            data = {"success": False, "error": str(e)}
+        except Exception as exc:
+            _log_public_exception("Document registration external processing failed", exc, user_id=request.user.id, project_id=project_id, doc_id=doc.id)
+            data = _public_error_payload("Document processing could not be started.", code="document_processing_failed", success=False)
             ws_url = None
-            logger.error("doc_register external_failed user_id=%s project_id=%s doc_id=%s error=%s", request.user.id, project_id, doc.id, e)
         else:
             logger.info("doc_register external_ok user_id=%s project_id=%s doc_id=%s", request.user.id, project_id, doc.id)
 
@@ -3493,9 +3494,10 @@ class BatteryViewSet(EncryptSelectedActionsMixin,viewsets.ModelViewSet):
                 battery.save(update_fields=update_fields)
 
             return Response({"ok": True, "battery_id": battery.id, "job_id": str(job_id), "result": result, "sources": synced_sources})
-        except Exception as e:
+        except Exception as exc:
+            _log_public_exception("Failed saving questions from qa_pairs", exc, battery_id=battery.id, job_id=str(job_id))
             return Response(
-                {"ok": False, "detail": "Failed saving questions from qa_pairs", "error": str(e), "battery_id": battery.id, "job_id": str(job_id)},
+                {"ok": False, "detail": "Failed saving questions from qa_pairs", "error": "Question persistence failed.", "battery_id": battery.id, "job_id": str(job_id)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -7890,9 +7892,10 @@ class FlashcardViewSet(EncryptSelectedActionsMixin,viewsets.ModelViewSet):
                 for jid in job_ids:
                     key = flashcard_redis_key(jid)
                     redis_deleted[jid] = int(client.delete(key))  # 1 if deleted, 0 if not found
-            except Exception as e:
-                # no rompas el endpoint si redis no está disponible
-                redis_error = str(e)
+            except Exception as exc:
+                # no rompas el endpoint si redis no est? disponible
+                _log_public_exception("Failed clearing learn-session redis state", exc, deck_id=deck.id, user_id=request.user.id)
+                redis_error = "Redis cleanup failed."
 
         return Response(
             {
@@ -9235,7 +9238,8 @@ class ProcessRunViewSet(viewsets.ReadOnlyModelViewSet):
         try:
             normalized = normalize_auto_generate_request(request.data or {})
         except AutoGenerateWorkflowError as exc:
-            return Response(_public_error_payload(str(exc), code="invalid_request"), status=status.HTTP_400_BAD_REQUEST)
+            _log_public_exception("Invalid auto-generate request", exc, user_id=request.user.id)
+            return Response(_public_error_payload("Invalid auto-generate request.", code="invalid_request"), status=status.HTTP_400_BAD_REQUEST)
 
         document_ids = normalized["document_ids"]
         docs_qs = Document.objects.select_related("project", "collection", "uploaded_by").filter(id__in=document_ids)
@@ -9274,7 +9278,8 @@ class ProcessRunViewSet(viewsets.ReadOnlyModelViewSet):
                 payload=normalized,
             )
         except AutoGenerateWorkflowError as exc:
-            return Response(_public_error_payload(str(exc), code="invalid_request"), status=status.HTTP_400_BAD_REQUEST)
+            _log_public_exception("Auto-generate run creation rejected", exc, user_id=request.user.id)
+            return Response(_public_error_payload("Invalid auto-generate request.", code="invalid_request"), status=status.HTTP_400_BAD_REQUEST)
 
         publish_run_event(process_run, event="process_run.updated")
 
