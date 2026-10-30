@@ -469,6 +469,10 @@ class AuthViewSet(viewsets.GenericViewSet):
             )
 
         user = authenticate(username=username, password=password)
+        # allauth's backend matches usernames case-insensitively: the username must be typed
+        # exactly. Signing in with the e-mail stays case-insensitive.
+        if user is not None and username != user.username and username.lower() != (user.email or "").lower():
+            user = None
         if user is None:
             logger.info("login invalid credentials username=%s", username)
             return Response({"error": "Invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
