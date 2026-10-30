@@ -12,6 +12,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from api.enterprise.error_handling import company_access_denied, generic_validation_error
 from api.enterprise.services.certification_service import CertificationService
 from api.enterprise.services.security_service import validate_company_access
 from api.enterprise.views.learning import EnterpriseViewSetMixin
@@ -175,7 +176,14 @@ class CertificateTemplateViewSet(EnterpriseViewSetMixin, viewsets.ModelViewSet):
                 compliance_program=compliance_program,
             )
         except ValueError as exc:
-            raise ValidationError({"detail": str(exc)})
+            raise generic_validation_error(
+                exc,
+                log_message="Certification request rejected",
+                detail="The certification request could not be completed.",
+                user_id=request.user.id,
+                company_id=template.company_id,
+                template_id=template.id,
+            )
 
         return Response(
             CertificationSerializer(cert).data,
@@ -277,7 +285,14 @@ class CertificationViewSet(EnterpriseViewSetMixin, viewsets.ReadOnlyModelViewSet
                 cert, request.user, reason
             )
         except ValueError as exc:
-            raise ValidationError({"detail": str(exc)})
+            raise generic_validation_error(
+                exc,
+                log_message="Certification revoke failed",
+                detail="The certificate could not be revoked.",
+                user_id=request.user.id,
+                company_id=cert.company_id,
+                certification_id=cert.id,
+            )
         return Response(CertificationSerializer(updated).data)
 
     @action(detail=True, methods=["get"], url_path="certificate-data")
@@ -294,7 +309,7 @@ class CertificationViewSet(EnterpriseViewSetMixin, viewsets.ReadOnlyModelViewSet
         try:
             validate_company_access(request.user, company_id)
         except PermissionError as exc:
-            raise PermissionDenied(str(exc))
+            raise company_access_denied(exc, user_id=request.user.id, company_id=company_id)
         from api.enterprise_models import Company
         company = Company.objects.get(id=company_id)
         certs = Certification.objects.filter(
@@ -310,7 +325,7 @@ class CertificationViewSet(EnterpriseViewSetMixin, viewsets.ReadOnlyModelViewSet
         try:
             validate_company_access(request.user, company_id)
         except PermissionError as exc:
-            raise PermissionDenied(str(exc))
+            raise company_access_denied(exc, user_id=request.user.id, company_id=company_id)
         from api.enterprise_models import Company
         company = Company.objects.get(id=company_id)
         data = CertificationService.get_user_certifications(request.user, company)

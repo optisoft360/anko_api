@@ -8,6 +8,7 @@ from rest_framework import serializers, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from api.enterprise.error_handling import company_access_denied
 from api.enterprise.services.security_service import validate_company_access
 from api.enterprise_email_models import EmailLog
 
@@ -40,8 +41,7 @@ class EmailLogViewSet(viewsets.ViewSet):
         try:
             validate_company_access(request.user, company_id)
         except PermissionError as exc:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied(str(exc))
+            raise company_access_denied(exc, user_id=request.user.id, company_id=company_id)
 
         qs = EmailLog.objects.filter(company_id=company_id)
 

@@ -8,6 +8,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from api.enterprise.error_handling import company_access_denied
 from api.enterprise.services.analytics_service import AnalyticsService
 from api.enterprise.services.security_service import validate_company_access
 from api.enterprise.services.rbac_service import has_permission
@@ -50,7 +51,7 @@ class AnalyticsDashboardViewSet(EnterpriseViewSetMixin, viewsets.ViewSet):
         try:
             membership = validate_company_access(request.user, company_id)
         except PermissionError as exc:
-            raise PermissionDenied(str(exc))
+            raise company_access_denied(exc, user_id=request.user.id, company_id=company_id)
         from api.enterprise_models import Company
         company = Company.objects.get(id=company_id)
         return company, membership
