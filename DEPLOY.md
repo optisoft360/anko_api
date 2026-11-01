@@ -29,6 +29,30 @@ For the port safeguard, at least one of these should also be available:
 
 Make sure your `.env` file exists in the project root on the server.
 
+## Redis authentication
+
+The API connects to the external `hope-redis` service using the Redis URLs in
+`.env`; Docker Compose does not start or configure that Redis service. If Redis
+requires a password, include it in every Redis URL used by the API and worker.
+For example:
+
+```text
+THROTTLE_CACHE_URL=redis://:YOUR_REDIS_PASSWORD@hope-redis:6379/4
+REDIS_URL=redis://:YOUR_REDIS_PASSWORD@hope-redis:6379/3
+CELERY_BROKER_URL=redis://:YOUR_REDIS_PASSWORD@hope-redis:6379/3
+CELERY_RESULT_BACKEND=redis://:YOUR_REDIS_PASSWORD@hope-redis:6379/3
+PROGRESS_REDIS_URL=redis://:YOUR_REDIS_PASSWORD@hope-redis:6379/2
+```
+
+Replace the placeholder with the password configured on the Redis server. If
+the password contains URL-reserved characters, percent-encode them. Keep these
+credentials only in the server's ignored `.env` file or a secrets manager, not
+in tracked files. The throttle cache uses `THROTTLE_CACHE_URL` (falling back to
+`REDIS_URL`), so leaving it unauthenticated causes throttled endpoints such as
+login to fail with `Authentication required`. If you set
+`HOPE_CELERY_BROKER_URL` or `WORKFLOW_PROGRESS_REDIS_URL`, include credentials
+in those URLs as well; they override the corresponding default URLs.
+
 ## 2. Add the SSH key
 
 Generate a deploy key locally if you do not already have one:
