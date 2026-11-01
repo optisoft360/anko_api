@@ -694,6 +694,37 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsPlatformAdmin]
 
+    def create(self, request, *args, **kwargs):
+        """
+        Admin create: password is required; optional company_id + company_role add the user to a
+        company in the same transaction (the global roles field stays separate).
+        """
+        from api.enterprise_models import Company, CompanyMembership
+        data = {k: v for k, v in request.data.items() if k not in ("company_id", "company_role")}
+        errors = {}
+        if not (data.get("password") or "").strip():
+            errors["password"] = ["This field is required."]
+        company_id = request.data.get("company_id")
+        company_role = (request.data.get("company_role") or "employee").strip()
+        company = None
+        if company_id not in (None, ""):
+            company = Company.objects.filter(pk=company_id).first() if str(company_id).isdigit() else None
+            if company is None:
+                errors["company_id"] = ["Company not found."]
+            if company_role not in dict(CompanyMembership.ROLE_CHOICES):
+                errors["company_role"] = ["Invalid company role."]
+        serializer = self.get_serializer(data=data)
+        if not serializer.is_valid():
+            errors = {**serializer.errors, **errors}
+        if errors:
+            return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            user = serializer.save()
+            if company is not None:
+                CompanyMembership.objects.create(user=user, company=company, role=company_role, status="active")
+        user = self.get_queryset().get(pk=user.pk)
+        return Response(self.get_serializer(user).data, status=status.HTTP_201_CREATED)
+
     def get_queryset(self):
         qs = (
             super().get_queryset().order_by("id")

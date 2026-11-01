@@ -196,3 +196,36 @@ class SelfEscalationTests(APITestCase):
         self.assertTrue(self.user.is_active)
         self.assertFalse(self.user.roles.filter(name="admin").exists())
 
+
+class AdminCreateUserTests(AdminAreaBase):
+    def test_password_required(self):
+        r = self.as_(self.staff).post("/api/users/", {"username": "p0_new", "email": "p0_new@example.com", "first_name": "N"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("password", r.data)
+        self.assertFalse(User.objects.filter(username="p0_new").exists())
+
+    def test_create_with_company_membership(self):
+        r = self.as_(self.staff).post("/api/users/", {
+            "username": "p0_new", "email": "p0_new@example.com", "first_name": "N", "password": "Str0ngPass!x9",
+            "company_id": self.company.id, "company_role": "trainer",
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        u = User.objects.get(username="p0_new")
+        self.assertTrue(u.check_password("Str0ngPass!x9"))
+        m = CompanyMembership.objects.get(user=u, company=self.company)
+        self.assertEqual((m.role, m.status), ("trainer", "active"))
+        self.assertEqual(r.data["company_memberships"][0]["company_name"], "P0 Co")
+
+    def test_duplicate_email_and_bad_company_are_field_errors_and_nothing_is_created(self):
+        r = self.as_(self.staff).post("/api/users/", {
+            "username": "p0_dupe", "email": "p0_user@example.com", "first_name": "D", "password": "Str0ngPass!x9",
+            "company_id": 99999999,
+        }, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("email", r.data)
+        self.assertIn("company_id", r.data)
+        self.assertFalse(User.objects.filter(username="p0_dupe").exists())
+
+    def test_owner_cannot_create_users(self):
+        r = self.as_(self.owner).post("/api/users/", {"username": "x1", "email": "x1@example.com", "first_name": "X", "password": "Str0ngPass!x9"}, format="json")
+        self.assertEqual(r.status_code, 403)
