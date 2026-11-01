@@ -9,12 +9,36 @@ class SustainedAnonRateThrottle(AnonRateThrottle):
     scope = "anon_sustained"
 
 
-class BurstUserRateThrottle(UserRateThrottle):
+def _is_platform_admin(user):
+    from api.permissions import IsPlatformAdmin
+
+    class _Req:  # IsPlatformAdmin only reads request.user
+        pass
+    req = _Req()
+    req.user = user
+    return IsPlatformAdmin().has_permission(req, None)
+
+
+class _StaffAwareUserRateThrottle(UserRateThrottle):
+    """Platform admins get their own, higher scope (and a separate counter)."""
+    staff_scope = None
+
+    def allow_request(self, request, view):
+        if self.staff_scope and _is_platform_admin(request.user):
+            self.scope = self.staff_scope
+            self.rate = self.get_rate()
+            self.num_requests, self.duration = self.parse_rate(self.rate)
+        return super().allow_request(request, view)
+
+
+class BurstUserRateThrottle(_StaffAwareUserRateThrottle):
     scope = "user_burst"
+    staff_scope = "staff_burst"
 
 
-class SustainedUserRateThrottle(UserRateThrottle):
+class SustainedUserRateThrottle(_StaffAwareUserRateThrottle):
     scope = "user_sustained"
+    staff_scope = "staff_sustained"
 
 
 class LeadAnonRateThrottle(AnonRateThrottle):

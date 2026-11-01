@@ -289,8 +289,12 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'anon_burst': os.getenv("DRF_THROTTLE_ANON_BURST", "20/min"),
         'anon_sustained': os.getenv("DRF_THROTTLE_ANON_SUSTAINED", "200/hour"),
-        'user_burst': os.getenv("DRF_THROTTLE_USER_BURST", "120/min"),
-        'user_sustained': os.getenv("DRF_THROTTLE_USER_SUSTAINED", "2000/hour"),
+        # A single page load of the app makes ~10 requests; 120/min ran out after a few pages.
+        'user_burst': os.getenv("DRF_THROTTLE_USER_BURST", "600/min"),
+        'user_sustained': os.getenv("DRF_THROTTLE_USER_SUSTAINED", "10000/hour"),
+        # Platform admins (is_staff / global "admin" role) browse many listings in a row.
+        'staff_burst': os.getenv("DRF_THROTTLE_STAFF_BURST", "1200/min"),
+        'staff_sustained': os.getenv("DRF_THROTTLE_STAFF_SUSTAINED", "20000/hour"),
         'anon_lead': os.getenv("DRF_THROTTLE_ANON_LEAD", "5/hour"),
         # C3: scoped limits (api/throttles.py)
         'auth': os.getenv("DRF_THROTTLE_AUTH", "10/min"),
