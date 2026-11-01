@@ -566,8 +566,12 @@ class AnalyticsService:
 
     @staticmethod
     def get_company_health_score(company: Company) -> Decimal:
+        return AnalyticsService.get_company_health_breakdown(company)["health_score"]
+
+    @staticmethod
+    def get_company_health_breakdown(company: Company) -> dict:
         """
-        Composite health score 0-100 combining:
+        Composite health score 0-100, with the value of each component, combining:
           - Avg compliance rate (40% weight)
           - Avg retention score (30% weight)
           - Certification coverage (20% weight)
@@ -627,7 +631,18 @@ class AnalyticsService:
             + cert_score * Decimal("0.20")
             + gap_score * Decimal("0.10")
         )
-        return health.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return {
+            "health_score": health.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+            "compliance_rate": compliance_score,
+            "compliance_total": total,
+            "compliance_compliant": compliant,
+            "avg_retention": retention_score,
+            "cert_coverage": cert_score,
+            "certified_members": certified_members,
+            "active_members": active_members,
+            "no_critical_gaps_score": gap_score,
+            "critical_gaps": critical_gaps,
+        }
 
     @staticmethod
     def get_retention_trends(company: Company, days: int = 90) -> List[dict]:
