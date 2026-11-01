@@ -85,7 +85,9 @@ class RetentionSnapshotSerializer(serializers.ModelSerializer):
 class KnowledgeGapSerializer(serializers.ModelSerializer):
     user_username = serializers.CharField(source="user.username", read_only=True)
     team_name = serializers.CharField(source="team.name", read_only=True)
-    topic_name = serializers.CharField(source="topic.name", read_only=True)
+    # The process topic (TagGroup) for gaps detected from Simulate; the legacy Topic otherwise.
+    topic_name = serializers.SerializerMethodField()
+    battery_name = serializers.CharField(source="battery.name", read_only=True)
     learning_path_name = serializers.CharField(source="learning_path.name", read_only=True)
     acknowledged_by_username = serializers.CharField(
         source="acknowledged_by.username", read_only=True
@@ -104,11 +106,19 @@ class KnowledgeGapSerializer(serializers.ModelSerializer):
             "team",
             "team_name",
             "topic",
+            "tag_group",
             "topic_name",
+            "battery",
+            "battery_name",
+            "learning_assignment",
             "learning_path",
             "learning_path_name",
             "severity",
             "status",
+            "source",
+            "correct_percent",
+            "questions_total",
+            "questions_missed",
             "retention_score_at_detection",
             "detected_at",
             "acknowledged_at",
@@ -136,6 +146,12 @@ class KnowledgeGapSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def get_topic_name(self, obj):
+        if obj.tag_group_id:
+            ks_topic = getattr(obj.tag_group, "knowledge_source_topic", None)
+            return ks_topic.title if ks_topic else obj.tag_group.name
+        return obj.topic.name if obj.topic_id else None
 
 
 class ReviewScheduleSerializer(serializers.ModelSerializer):

@@ -238,6 +238,41 @@ class KnowledgeGap(models.Model):
         related_name="knowledge_gaps",
     )
 
+    # Enterprise processes group their content by TagGroup (the process "topic");
+    # gaps detected from Simulate attempts point at it and at the battery.
+    tag_group = models.ForeignKey(
+        "api.TagGroup",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="knowledge_gaps",
+    )
+    battery = models.ForeignKey(
+        "api.Battery",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="knowledge_gaps",
+    )
+    learning_assignment = models.ForeignKey(
+        "api.LearningPathAssignment",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="knowledge_gaps",
+    )
+
+    SOURCE_DETECTED = "detected"
+    SOURCE_RETENTION = "retention"
+    SOURCE_SEED = "seed"
+    SOURCE_CHOICES = [
+        (SOURCE_DETECTED, "Detected from Simulate attempts"),
+        (SOURCE_RETENTION, "Detected from retention"),
+        (SOURCE_SEED, "Demo data"),
+    ]
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default=SOURCE_RETENTION, db_index=True)
+
+    correct_percent = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    questions_total = models.PositiveIntegerField(default=0)
+    questions_missed = models.PositiveIntegerField(default=0)
+
     severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default="medium")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="open")
 
