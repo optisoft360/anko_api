@@ -164,3 +164,35 @@ class GlobalInvitationsTests(AdminAreaBase):
     def test_owner_and_member_denied(self):
         for who in (self.owner, self.user):
             self.assertEqual(self.as_(who).get("/api/enterprise/invitations/global/").status_code, 403)
+
+
+class SelfEscalationTests(APITestCase):
+    """Nobody can make themselves staff or admin through sign-up or their own profile."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.admin_role = Role.objects.get_or_create(name="admin")[0]
+        cls.user = User.objects.create_user(username="p0_self", email="p0_self@example.com", password="x", first_name="Old")
+
+    def test_register_ignores_privilege_fields(self):
+        self.client.raise_request_exception = False  # the verification email may fail in tests; the user is saved first
+        self.client.post("/api/auth/register/", {
+            "username": "p0_signup", "email": "p0_signup@example.com", "password": "Str0ngPass!x9", "first_name": "Ana",
+            "is_staff": True, "roles": [self.admin_role.id],
+        }, format="json")
+        u = User.objects.get(username="p0_signup")
+        self.assertFalse(u.is_staff)
+        self.assertNotIn("admin", set(u.roles.values_list("name", flat=True)))
+        self.assertEqual(u.first_name, "Ana")
+
+    def test_profile_patch_ignores_privilege_fields_but_updates_profile(self):
+        self.client.force_authenticate(self.user)
+        r = self.client.patch("/api/auth/me/", {"first_name": "New", "is_staff": True, "is_active": False,
+                                                 "roles": [self.admin_role.id]}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.first_name, "New")
+        self.assertFalse(self.user.is_staff)
+        self.assertTrue(self.user.is_active)
+        self.assertFalse(self.user.roles.filter(name="admin").exists())
+

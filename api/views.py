@@ -223,6 +223,10 @@ def _save_pdf_decryption_key(
     )
 
 
+REGISTER_FIELDS = ("username", "email", "password", "first_name", "last_name")
+SELF_SERVICE_BLOCKED_FIELDS = {"is_staff", "is_superuser", "is_active", "roles", "company_memberships"}
+
+
 def _is_rbac_admin_user(user) -> bool:
     if not user or not getattr(user, "is_authenticated", False):
         return False
@@ -432,7 +436,9 @@ class AuthViewSet(viewsets.GenericViewSet):
     @action(detail=False, methods=["post"], permission_classes=[AllowAny],
             throttle_classes=with_default_throttles(AuthAnonRateThrottle))
     def register(self, request):
-        data = request.data
+        # Only the sign-up form fields: is_staff / roles in the body used to be saved as sent,
+        # letting anyone register as a platform admin.
+        data = {k: request.data[k] for k in REGISTER_FIELDS if k in request.data}
 
         serializer = UserSerializer(data=data)
         if not serializer.is_valid():
@@ -663,8 +669,9 @@ class AuthViewSet(viewsets.GenericViewSet):
             serializer = self.get_serializer(user)
             return Response(serializer.data)
 
-        # PATCH
-        serializer = self.get_serializer(user, data=request.data, partial=True)
+        # PATCH — privilege fields are never self-service (they used to be writable here).
+        data = {k: v for k, v in request.data.items() if k not in SELF_SERVICE_BLOCKED_FIELDS}
+        serializer = self.get_serializer(user, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
