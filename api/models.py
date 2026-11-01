@@ -74,6 +74,8 @@ class Role(models.Model):
     name = models.CharField(max_length=80, unique=True)
     description = models.TextField(blank=True)
     permissions = models.ManyToManyField(Permission, blank=True, related_name="roles")
+    # Roles the code relies on by name (admin, client, enterprise.*): cannot be deleted or renamed.
+    is_system = models.BooleanField(default=False)
 
     def __str__(self):
         return self.name

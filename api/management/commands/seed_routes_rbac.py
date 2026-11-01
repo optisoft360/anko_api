@@ -133,7 +133,11 @@ CLIENT_ALLOWED = [
 # auditor → read-only on compliance and analytics. No content interaction.
 # ─────────────────────────────────────────────────────────────────────────────
 
-OWNER_ALLOWED = ALL_KEYS  # owner sees everything
+PLATFORM_ADMIN_ALLOWED = ALL_KEYS  # global "admin" role sees everything
+# Company owner/admin: every route except the platform admin area, which is
+# platform-admin only (is_staff / global "admin" role), never a company role.
+OWNER_ALLOWED = [k for k in ALL_KEYS if not k.startswith("dashboard.admin.")]
+FULL_ACCESS_ROLES = (PLATFORM_ADMIN_ALLOWED, OWNER_ALLOWED)  # get view + manage on every allowed key
 
 # View lists below are the source of truth for sidebar visibility, agreed with
 # the user role-by-role after auditing what each backend endpoint already
@@ -279,7 +283,7 @@ ROLES = [
     {
         "name": "admin",
         "description": "Platform admin (is_staff). Sees everything — admin area + all enterprise.",
-        "allowed_keys": OWNER_ALLOWED,
+        "allowed_keys": PLATFORM_ADMIN_ALLOWED,
     },
     {
         "name": "client",
@@ -288,7 +292,7 @@ ROLES = [
     },
     {
         "name": "enterprise.owner",
-        "description": "Enterprise owner. Full access to all enterprise routes + platform admin area.",
+        "description": "Enterprise owner. Full access to all enterprise routes of their company. No platform admin area.",
         "allowed_keys": OWNER_ALLOWED,
     },
     {
@@ -370,17 +374,20 @@ class Command(BaseCommand):
         for role_def in ROLES:
             role, created = Role.objects.get_or_create(
                 name=role_def["name"],
-                defaults={"description": role_def["description"]},
+                defaults={"description": role_def["description"], "is_system": True},
             )
+            if not role.is_system:
+                role.is_system = True
+                role.save(update_fields=["is_system"])
             if not created:
                 # Update description in case it changed
                 role.description = role_def["description"]
                 role.save(update_fields=["description"])
 
             allowed = role_def["allowed_keys"]
-            if allowed is OWNER_ALLOWED:
-                # owner/admin gets every view + manage permission
-                perms = list(Permission.objects.filter(action__in=["view", "manage"], resource__key__in=ALL_KEYS))
+            if any(allowed is full for full in FULL_ACCESS_ROLES):
+                # platform admin / company owner+admin get every view + manage permission they are allowed
+                perms = list(Permission.objects.filter(action__in=["view", "manage"], resource__key__in=allowed))
             else:
                 missing = [k for k in allowed if k not in perm_by_key]
                 if missing:

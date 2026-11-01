@@ -1,4 +1,4 @@
-"""Admin area P0: billing writes and global invitations.
+"""Admin area P0: billing writes, role permissions, system roles and global invitations.
 
 Denied cases use real roles (a company owner who is not staff, a plain user), never is_staff.
 """
@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from api.enterprise_models import Company, CompanyInvitation, CompanyMembership
-from api.models import Plan, PlanLimit, Role, Subscription, User
+from api.models import Permission, Plan, PlanLimit, Resource, Role, Subscription, User
 
 
 class AdminAreaBase(APITestCase):
@@ -77,6 +77,68 @@ class BillingWritesTests(AdminAreaBase):
         r = self.as_(self.role_admin).get("/api/subscriptions/")
         rows = r.data["results"] if isinstance(r.data, dict) else r.data
         self.assertIn(self.sub.id, {row["id"] for row in rows})
+
+
+class RolePermissionsTests(AdminAreaBase):
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        res = [Resource.objects.create(key=f"p0.res{i}", name=f"Res {i}") for i in range(15)]
+        cls.perms = [Permission.objects.create(resource=r, action=a, code=f"{r.key}.{a}") for r in res for a in ("view", "manage")]
+        cls.custom = Role.objects.create(name="p0.custom", description="custom")
+        cls.custom.permissions.set(cls.perms[:3])
+        cls.system = Role.objects.update_or_create(name="client", defaults={"is_system": True})[0]
+
+    def test_all_permissions_unpaginated_and_grouped(self):
+        r = self.as_(self.staff).get("/api/permissions/all/")
+        self.assertEqual(r.status_code, 200)
+        ids = {p["id"] for g in r.data for p in g["permissions"]}
+        self.assertEqual(len(ids), Permission.objects.count())  # more than one page (30 > 10)
+        group = next(g for g in r.data if g["resource_key"] == "p0.res0")
+        self.assertEqual(group["resource_name"], "Res 0")
+        self.assertEqual({p["action"] for p in group["permissions"]}, {"view", "manage"})
+
+    def test_role_detail_keeps_old_fields_and_adds_new_ones(self):
+        r = self.as_(self.staff).get(f"/api/roles/{self.custom.id}/")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue({"id", "name", "description", "permissions", "permission_ids", "is_system"} <= set(r.data))
+        self.assertEqual(sorted(r.data["permissions"]), sorted(p.id for p in self.perms[:3]))
+        self.assertEqual(r.data["permission_ids"], sorted(p.id for p in self.perms[:3]))
+        self.assertIs(r.data["is_system"], False)
+
+    def test_put_permissions_replaces_the_whole_set(self):
+        new_ids = [p.id for p in self.perms[10:25]]
+        r = self.as_(self.staff).put(f"/api/roles/{self.custom.id}/permissions/", {"permission_ids": new_ids}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(sorted(self.custom.permissions.values_list("id", flat=True)), sorted(new_ids))
+
+    def test_put_permissions_rejects_unknown_ids_without_changes(self):
+        before = sorted(self.custom.permissions.values_list("id", flat=True))
+        r = self.as_(self.staff).put(f"/api/roles/{self.custom.id}/permissions/", {"permission_ids": [self.perms[0].id, 99999999]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("permission_ids", r.data)
+        self.assertEqual(sorted(self.custom.permissions.values_list("id", flat=True)), before)
+
+    def test_system_role_cannot_be_deleted_or_renamed_but_description_changes(self):
+        c = self.as_(self.staff)
+        r = c.delete(f"/api/roles/{self.system.id}/")
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.data["detail"], "System roles cannot be deleted.")
+        self.assertEqual(c.patch(f"/api/roles/{self.system.id}/", {"name": "renamed"}, format="json").status_code, 400)
+        self.assertEqual(c.patch(f"/api/roles/{self.system.id}/", {"description": "new text"}, format="json").status_code, 200)
+        self.assertEqual(c.patch(f"/api/roles/{self.system.id}/", {"is_system": False}, format="json").status_code, 200)
+        self.system.refresh_from_db()
+        self.assertEqual((self.system.name, self.system.is_system), ("client", True))
+
+    def test_custom_role_can_be_deleted(self):
+        self.assertEqual(self.as_(self.staff).delete(f"/api/roles/{self.custom.id}/").status_code, 204)
+
+    def test_rbac_admin_endpoints_denied_to_owner_and_member(self):
+        for who in (self.user, self.owner):
+            c = self.as_(who)
+            self.assertEqual(c.get("/api/permissions/all/").status_code, 403)
+            self.assertEqual(c.put(f"/api/roles/{self.custom.id}/permissions/", {"permission_ids": []}, format="json").status_code, 403)
+            self.assertEqual(c.delete(f"/api/roles/{self.custom.id}/").status_code, 403)
 
 
 class GlobalInvitationsTests(AdminAreaBase):

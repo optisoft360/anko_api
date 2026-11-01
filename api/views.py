@@ -4835,11 +4835,48 @@ class PermissionViewSet(viewsets.ModelViewSet):
     serializer_class = PermissionSerializer
     permission_classes = [IsAuthenticated, IsPlatformAdmin]
 
+    @action(detail=False, methods=["get"], url_path="all")
+    def all_grouped(self, request):
+        """GET /api/permissions/all/ — every permission, unpaginated, grouped by resource."""
+        groups = {}
+        for perm in self.get_queryset():
+            res = perm.resource
+            group = groups.setdefault(res.id, {
+                "resource": res.id,
+                "resource_key": res.key,
+                "resource_name": res.name or res.key,
+                "permissions": [],
+            })
+            group["permissions"].append({"id": perm.id, "action": perm.action, "code": perm.code})
+        return Response(list(groups.values()))
+
 
 class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.prefetch_related("permissions").all().order_by("name")
     serializer_class = RoleSerializer
     permission_classes = [IsAuthenticated, IsPlatformAdmin]
+
+    def destroy(self, request, *args, **kwargs):
+        if self.get_object().is_system:
+            return Response({"detail": "System roles cannot be deleted."}, status=status.HTTP_409_CONFLICT)
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=["put"], url_path="permissions")
+    def set_permissions(self, request, pk=None):
+        """PUT /api/roles/{id}/permissions/ {permission_ids: [...]} — replaces the whole set atomically."""
+        role = self.get_object()
+        ids = request.data.get("permission_ids")
+        if not isinstance(ids, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids):
+            return Response({"permission_ids": ["A list of permission ids is required."]}, status=status.HTTP_400_BAD_REQUEST)
+        ids = set(ids)
+        found = set(Permission.objects.filter(id__in=ids).values_list("id", flat=True))
+        missing = sorted(ids - found)
+        if missing:
+            return Response({"permission_ids": [f"Unknown permission ids: {missing}"]}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            role.permissions.set(found)
+        role = Role.objects.prefetch_related("permissions").get(pk=role.pk)
+        return Response(self.get_serializer(role).data)
 
 
 class GlobalCompanyMembershipViewSet(viewsets.ModelViewSet):

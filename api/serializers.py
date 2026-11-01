@@ -694,10 +694,21 @@ class RoleSerializer(serializers.ModelSerializer):
         many=True,
         required=False
     )
+    # Read-only mirror of `permissions` under an explicit name for the admin UI.
+    permission_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = Role
-        fields = ["id", "name", "description", "permissions"]
+        fields = ["id", "name", "description", "permissions", "permission_ids", "is_system"]
+        read_only_fields = ["is_system"]
+
+    def get_permission_ids(self, obj):
+        return sorted(p.id for p in obj.permissions.all())
+
+    def validate_name(self, value):
+        if self.instance is not None and self.instance.is_system and value != self.instance.name:
+            raise serializers.ValidationError("System roles cannot be renamed.")
+        return value
 
 
 # =========================
