@@ -63,6 +63,11 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.authtoken.models import Token
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from api.permissions import IsPlatformAdmin
+from api.admin_listing import apply_list_params
+from api.admin_serializers import (
+    AdminBatterySerializer, AdminDeckSerializer, AdminFlashcardSerializer, AdminProjectSerializer,
+    PlanLimitAdminSerializer, SubscriptionAdminSerializer,
+)
 from api.enterprise.serializers.company import MembershipSerializer
 from django.db.models import Prefetch
 from django.http import HttpResponse, StreamingHttpResponse
@@ -683,16 +688,22 @@ class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsPlatformAdmin]
 
     def get_queryset(self):
-        qs = super().get_queryset().order_by("id")
-        search = (self.request.query_params.get("search") or "").strip()
-        if search:
-            qs = qs.filter(
-                Q(username__icontains=search)
-                | Q(email__icontains=search)
-                | Q(first_name__icontains=search)
-                | Q(last_name__icontains=search)
-            )
-        return qs
+        qs = (
+            super().get_queryset().order_by("id")
+            .prefetch_related("roles__permissions", "company_memberships__company")
+        )
+        return apply_list_params(
+            self.request, qs,
+            search=("username", "email", "first_name", "last_name"),
+            ordering=("id", "username", "email", "date_joined", "last_login"),
+            filters={
+                "is_active": ("is_active", "bool"),
+                "is_staff": ("is_staff", "bool"),
+                "company": ("company_memberships__company_id", "int"),
+                "role": ("roles__name", "str"),
+                "company_role": ("company_memberships__role", "str"),
+            },
+        )
 
 
 class SSERenderer(BaseRenderer):
@@ -4949,6 +4960,18 @@ class PlanLimitViewSet(viewsets.ModelViewSet):
     serializer_class = PlanLimitSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_serializer_class(self):
+        if self.action in ("list", "retrieve"):
+            return PlanLimitAdminSerializer  # adds read-only plan_detail
+        return super().get_serializer_class()
+
+    def get_queryset(self):
+        return apply_list_params(
+            self.request, super().get_queryset(),
+            search=("key",), ordering=("key", "plan__tier"),
+            filters={"plan": ("plan_id", "int"), "value_type": ("value_type", "str")},
+        )
+
     def get_permissions(self):
         if self.action in _ADMIN_WRITE_ACTIONS:
             return [IsAuthenticated(), IsPlatformAdmin()]
@@ -4967,12 +4990,23 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated(), IsPlatformAdmin()]
         return super().get_permissions()
 
+    def get_serializer_class(self):
+        if self.action in ("list", "retrieve"):
+            return SubscriptionAdminSerializer  # adds read-only user_detail / plan_detail
+        return super().get_serializer_class()
+
     def get_queryset(self):
         # usuario normal solo ve su subscription; admin de plataforma ve todas
         user = self.request.user
-        if _is_rbac_admin_user(user):
-            return super().get_queryset()
-        return super().get_queryset().filter(user=user)
+        qs = super().get_queryset()
+        if not _is_rbac_admin_user(user):
+            return qs.filter(user=user)
+        return apply_list_params(
+            self.request, qs,
+            search=("user__username", "user__email"),
+            ordering=("id", "status", "start_at", "current_period_end"),
+            filters={"plan": ("plan_id", "int"), "status": ("status", "str")},
+        )
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="me")
     def me(self, request):
@@ -8761,7 +8795,12 @@ class SupportRequestViewSet(viewsets.ModelViewSet):
         return throttles
 
     def get_queryset(self):
-        return SupportRequest.objects.all().order_by("-created_at")
+        return apply_list_params(
+            self.request, SupportRequest.objects.select_related("user").all().order_by("-created_at"),
+            search=("name", "email", "message"),
+            ordering=("created_at", "status", "name"),
+            filters={"status": ("status", "str"), "source": ("source", "str")},
+        )
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -9625,15 +9664,18 @@ class AdminViewSet(viewsets.GenericViewSet):
         if err:
             return err
         qs = Flashcard.objects.select_related("deck").all().order_by("-id")
-        deck_id = request.query_params.get("deck")
-        if deck_id:
-            qs = qs.filter(deck_id=deck_id)
+        qs = apply_list_params(
+            request, qs,
+            search=("front", "back"),
+            ordering=("id", "created_at"),
+            filters={"deck": ("deck_id", "int")},
+        )
         page = self.paginate_queryset(qs)
         if page is not None:
             return self.get_paginated_response(
-                FlashcardSerializer(page, many=True, context={"request": request}).data
+                AdminFlashcardSerializer(page, many=True, context={"request": request}).data
             )
-        return Response(FlashcardSerializer(qs, many=True, context={"request": request}).data)
+        return Response(AdminFlashcardSerializer(qs, many=True, context={"request": request}).data)
 
     @action(detail=False, methods=["get", "patch", "delete"],
             url_path=r"flashcards/(?P<item_pk>\d+)")
@@ -9765,19 +9807,27 @@ class AdminViewSet(viewsets.GenericViewSet):
         qs = (
             Deck.objects
             .select_related("owner", "project")
-            .annotate(card_count=Count("cards", distinct=True))
+            .prefetch_related("sections", "source_tag_groups")
+            .annotate(
+                card_count=Count("cards", distinct=True),
+                approved_total=Count("access_requests", filter=Q(access_requests__status="approved"), distinct=True),
+                rejected_total=Count("access_requests", filter=Q(access_requests__status="rejected"), distinct=True),
+            )
             .all()
             .order_by("-id")
         )
-        project_id = request.query_params.get("project")
-        if project_id:
-            qs = qs.filter(project_id=project_id)
+        qs = apply_list_params(
+            request, qs,
+            search=("title",),
+            ordering=("id", "title", "created_at", "card_count"),
+            filters={"project": ("project_id", "int"), "owner": ("owner_id", "int"), "visibility": ("visibility", "str")},
+        )
         page = self.paginate_queryset(qs)
         if page is not None:
             return self.get_paginated_response(
-                DeckListSerializer(page, many=True, context={"request": request}).data
+                AdminDeckSerializer(page, many=True, context={"request": request}).data
             )
-        return Response(DeckListSerializer(qs, many=True, context={"request": request}).data)
+        return Response(AdminDeckSerializer(qs, many=True, context={"request": request}).data)
 
     @action(detail=False, methods=["get", "patch", "delete"],
             url_path=r"decks/(?P<item_pk>\d+)")
@@ -9812,13 +9862,74 @@ class AdminViewSet(viewsets.GenericViewSet):
         err = self._require_admin(request)
         if err:
             return err
-        qs = Project.objects.all().order_by("-id")
+        qs = (
+            Project.objects.select_related("owner").prefetch_related("members")
+            .annotate(documents_total=Count("documents", distinct=True)).all().order_by("-id")
+        )
+        qs = apply_list_params(
+            request, qs,
+            search=("title",),
+            ordering=("id", "title", "created_at", "updated_at"),
+            filters={"owner": ("owner_id", "int"), "archived": ("archived", "bool")},
+        )
         page = self.paginate_queryset(qs)
         if page is not None:
             return self.get_paginated_response(
-                ProjectSerializer(page, many=True, context={"request": request}).data
+                AdminProjectSerializer(page, many=True, context={"request": request}).data
             )
-        return Response(ProjectSerializer(qs, many=True, context={"request": request}).data)
+        return Response(AdminProjectSerializer(qs, many=True, context={"request": request}).data)
+
+    # ----------------------------------------------------------
+    # BATERÍAS / LEARNING PATHS (solo listado, todas las empresas)
+    # ----------------------------------------------------------
+
+    @action(detail=False, methods=["get"], url_path="batteries")
+    def admin_list_batteries(self, request):
+        """GET /api/admin/batteries/ — every battery, lean rows with project/rule/owner details."""
+        err = self._require_admin(request)
+        if err:
+            return err
+        qs = (
+            Battery.objects.select_related("project__owner", "rule")
+            .annotate(question_count=Count("questions_rel", distinct=True))
+            .all().order_by("-id")
+        )
+        qs = apply_list_params(
+            request, qs,
+            search=("name",),
+            ordering=("id", "name", "created_at", "question_count"),
+            filters={"project": ("project_id", "int"), "rule": ("rule_id", "int"),
+                     "status": ("status", "str"), "visibility": ("visibility", "str")},
+        )
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            return self.get_paginated_response(AdminBatterySerializer(page, many=True, context={"request": request}).data)
+        return Response(AdminBatterySerializer(qs, many=True, context={"request": request}).data)
+
+    @action(detail=False, methods=["get"], url_path="learning-paths")
+    def admin_list_learning_paths(self, request):
+        """GET /api/admin/learning-paths/ — learning paths of every company."""
+        err = self._require_admin(request)
+        if err:
+            return err
+        from api.admin_serializers import get_admin_learning_path_serializer
+        from api.enterprise_learning_models import LearningPath
+        qs = (
+            LearningPath.objects.select_related("company", "created_by")
+            .annotate(modules_total=Count("modules", distinct=True), assignments_total=Count("assignments", distinct=True))
+            .all().order_by("-id")
+        )
+        qs = apply_list_params(
+            request, qs,
+            search=("name",),
+            ordering=("id", "name", "created_at", "updated_at"),
+            filters={"company": ("company_id", "int"), "status": ("status", "str")},
+        )
+        ser = get_admin_learning_path_serializer()
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            return self.get_paginated_response(ser(page, many=True, context={"request": request}).data)
+        return Response(ser(qs, many=True, context={"request": request}).data)
 
     @action(detail=False, methods=["get", "patch", "delete"],
             url_path=r"projects/(?P<item_pk>\d+)")
