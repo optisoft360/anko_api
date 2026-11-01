@@ -66,7 +66,7 @@ from api.permissions import IsPlatformAdmin
 from api.admin_listing import apply_list_params
 from api.admin_serializers import (
     AdminBatterySerializer, AdminDeckSerializer, AdminFlashcardSerializer, AdminProjectSerializer,
-    PlanLimitAdminSerializer, SubscriptionAdminSerializer,
+    PlanLimitAdminSerializer, SubscriptionAdminSerializer, SupportRequestAdminSerializer,
 )
 from api.enterprise.serializers.company import MembershipSerializer
 from django.db.models import Prefetch
@@ -4884,6 +4884,16 @@ class PermissionViewSet(viewsets.ModelViewSet):
     serializer_class = PermissionSerializer
     permission_classes = [IsAuthenticated, IsPlatformAdmin]
 
+    def get_queryset(self):
+        if self.action != "list":
+            return super().get_queryset()
+        return apply_list_params(
+            self.request, super().get_queryset(),
+            search=("resource__key", "resource__name", "code"),
+            ordering=("resource__key", "action"),
+            filters={"action": ("action", "str"), "resource": ("resource_id", "int")},
+        )
+
     @action(detail=False, methods=["get"], url_path="all")
     def all_grouped(self, request):
         """GET /api/permissions/all/ — every permission, unpaginated, grouped by resource."""
@@ -4963,6 +4973,12 @@ class PlanViewSet(viewsets.ModelViewSet):
         if self.action in _ADMIN_WRITE_ACTIONS:
             return [IsAuthenticated(), IsPlatformAdmin()]
         return super().get_permissions()
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.action in ("list", "retrieve") and _is_rbac_admin_user(self.request.user):
+            qs = qs.annotate(subscribers_total=Count("subscriptions", distinct=True))
+        return qs
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="me/limits")
     def my_limits(self, request):
@@ -8832,12 +8848,17 @@ class SupportRequestViewSet(viewsets.ModelViewSet):
             throttles.append(LeadAnonRateThrottle())
         return throttles
 
+    def get_serializer_class(self):
+        if self.action == "create":
+            return SupportRequestSerializer  # public form, unchanged
+        return SupportRequestAdminSerializer
+
     def get_queryset(self):
         return apply_list_params(
-            self.request, SupportRequest.objects.select_related("user").all().order_by("-created_at"),
+            self.request, SupportRequest.objects.select_related("user", "assigned_to").all().order_by("-created_at"),
             search=("name", "email", "message"),
             ordering=("created_at", "status", "name"),
-            filters={"status": ("status", "str"), "source": ("source", "str")},
+            filters={"status": ("status", "str"), "source": ("source", "str"), "assigned_to": ("assigned_to_id", "int")},
         )
 
     def perform_create(self, serializer):
@@ -9916,6 +9937,70 @@ class AdminViewSet(viewsets.GenericViewSet):
                 AdminProjectSerializer(page, many=True, context={"request": request}).data
             )
         return Response(AdminProjectSerializer(qs, many=True, context={"request": request}).data)
+
+    # ----------------------------------------------------------
+    # ESTADÍSTICAS DE PLATAFORMA
+    # ----------------------------------------------------------
+
+    @action(detail=False, methods=["get"], url_path="platform/stats")
+    def platform_stats(self, request):
+        """
+        GET /api/admin/platform/stats/ — platform-wide counters for the admin Overview (60 s cache).
+
+        companies.total/active: Company rows / with is_active.
+        users.total/active/staff: User rows / is_active / platform admins (is_staff, superuser or global "admin" role).
+        users.new_last_30d: date_joined within 30 days.
+        subscriptions.by_plan: Subscription rows grouped by plan tier.
+        content.*: rows of Project (personal processes), KnowledgeSource (company processes), LearningPath,
+                   Deck, Battery and Flashcard.
+        invitations.pending: CompanyInvitation with status "pending".
+        support.open: SupportRequest not "done".
+        generation_jobs: ProcessRun queued/running/waiting (processing) and failed.
+        """
+        err = self._require_admin(request)
+        if err:
+            return err
+        from django.core.cache import cache
+        cached = cache.get("admin_platform_stats")
+        if cached is not None:
+            return Response(cached)
+
+        import datetime
+        from django.utils import timezone
+        from api.enterprise_models import Company, CompanyInvitation
+        from api.enterprise_learning_models import LearningPath
+        from api.enterprise_document_intelligence_models import KnowledgeSource
+
+        staff_q = Q(is_staff=True) | Q(is_superuser=True) | Q(roles__name="admin")
+        data = {
+            "companies": {"total": Company.objects.count(), "active": Company.objects.filter(is_active=True).count()},
+            "users": {
+                "total": User.objects.count(),
+                "active": User.objects.filter(is_active=True).count(),
+                "staff": User.objects.filter(staff_q).distinct().count(),
+                "new_last_30d": User.objects.filter(date_joined__gte=timezone.now() - datetime.timedelta(days=30)).count(),
+            },
+            "subscriptions": {"by_plan": [
+                {"plan": row["plan__tier"], "name": row["plan__name"], "count": row["n"]}
+                for row in Subscription.objects.values("plan__tier", "plan__name").annotate(n=Count("id")).order_by("plan__tier")
+            ]},
+            "content": {
+                "projects": Project.objects.count(),
+                "processes": KnowledgeSource.objects.count(),
+                "learning_paths": LearningPath.objects.count(),
+                "decks": Deck.objects.count(),
+                "batteries": Battery.objects.count(),
+                "flashcards": Flashcard.objects.count(),
+            },
+            "invitations": {"pending": CompanyInvitation.objects.filter(status="pending").count()},
+            "support": {"open": SupportRequest.objects.exclude(status=SupportRequest.STATUS_DONE).count()},
+            "generation_jobs": {
+                "processing": ProcessRun.objects.filter(status__in=["queued", "running", "waiting"]).count(),
+                "failed": ProcessRun.objects.filter(status="failed").count(),
+            },
+        }
+        cache.set("admin_platform_stats", data, 60)
+        return Response(data)
 
     # ----------------------------------------------------------
     # BATERÍAS / LEARNING PATHS (solo listado, todas las empresas)

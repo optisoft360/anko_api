@@ -723,6 +723,11 @@ class PlanLimitSerializer(serializers.ModelSerializer):
 
 class PlanSerializer(serializers.ModelSerializer):
     limits = PlanLimitSerializer(many=True, read_only=True)
+    # Only annotated for platform admins (PlanViewSet); null for everyone else.
+    subscribers_count = serializers.SerializerMethodField()
+
+    def get_subscribers_count(self, obj):
+        return getattr(obj, "subscribers_total", None)
 
     class Meta:
         model = Plan
@@ -738,6 +743,7 @@ class PlanSerializer(serializers.ModelSerializer):
             "max_batteries",
             "is_active",
             "limits",
+            "subscribers_count",
         ]
 class SubscriptionSerializer(serializers.ModelSerializer):
     class Meta:

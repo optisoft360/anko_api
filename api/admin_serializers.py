@@ -6,8 +6,45 @@ The views select/prefetch what these read, so a page costs a fixed number of que
 from rest_framework import serializers
 
 from api.admin_listing import user_detail
-from api.models import Battery
+from api.models import Battery, SupportRequest
 from api.serializers import DeckListSerializer, FlashcardSerializer, PlanLimitSerializer, ProjectSerializer, SubscriptionSerializer
+
+
+class SupportRequestAdminSerializer(serializers.ModelSerializer):
+    """Admin inbox row: everything the public serializer shows plus status/assignee/note, editable."""
+
+    user_detail = serializers.SerializerMethodField()
+    assigned_to_detail = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SupportRequest
+        fields = ["id", "user", "user_detail", "name", "phone", "email", "message", "status", "source",
+                  "created_at", "resolved_at", "assigned_to", "assigned_to_detail", "internal_note", "updated_at"]
+        read_only_fields = ["id", "user", "name", "phone", "email", "message", "source", "created_at", "resolved_at", "updated_at"]
+
+    def get_user_detail(self, obj):
+        return user_detail(obj.user)
+
+    def get_assigned_to_detail(self, obj):
+        return user_detail(obj.assigned_to)
+
+    def validate_assigned_to(self, value):
+        from api.permissions import IsPlatformAdmin
+
+        class _R:
+            user = value
+        if value is not None and not IsPlatformAdmin().has_permission(_R(), None):
+            raise serializers.ValidationError("Only platform admins can be assigned.")
+        return value
+
+    def update(self, instance, validated_data):
+        from django.utils import timezone
+        status = validated_data.get("status")
+        if status == SupportRequest.STATUS_DONE and instance.status != SupportRequest.STATUS_DONE:
+            validated_data["resolved_at"] = timezone.now()
+        elif status and status != SupportRequest.STATUS_DONE:
+            validated_data["resolved_at"] = None
+        return super().update(instance, validated_data)
 
 
 def plan_detail(plan):

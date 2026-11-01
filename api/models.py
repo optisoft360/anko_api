@@ -1005,6 +1005,13 @@ class SupportRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
 
+    # Admin inbox (platform admins only).
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="assigned_support_requests"
+    )
+    internal_note = models.TextField(blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True, null=True)
+
     def __str__(self):
         return f"{self.user_id} - {self.status} - {self.created_at:%Y-%m-%d}"
 
