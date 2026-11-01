@@ -17,6 +17,8 @@ class InvitationSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source="company.name", read_only=True)
     invited_by_email = serializers.EmailField(source="invited_by.email", read_only=True, default=None)
     is_usable = serializers.SerializerMethodField()
+    company_detail = serializers.SerializerMethodField()
+    invited_by_detail = serializers.SerializerMethodField()
 
     class Meta:
         model = CompanyInvitation
@@ -24,6 +26,7 @@ class InvitationSerializer(serializers.ModelSerializer):
             "id",
             "company",
             "company_name",
+            "company_detail",
             "email",
             "role",
             "employee_stage",
@@ -32,6 +35,7 @@ class InvitationSerializer(serializers.ModelSerializer):
             "is_usable",
             "invited_by",
             "invited_by_email",
+            "invited_by_detail",
             "accepted_by",
             "accepted_at",
             "expires_at",
@@ -42,6 +46,13 @@ class InvitationSerializer(serializers.ModelSerializer):
 
     def get_is_usable(self, obj):
         return obj.is_usable()
+
+    def get_company_detail(self, obj):
+        return {"id": obj.company_id, "name": obj.company.name} if obj.company_id else None
+
+    def get_invited_by_detail(self, obj):
+        u = obj.invited_by
+        return {"id": u.id, "username": u.username, "email": u.email} if u else None
 
 
 class InvitationPreviewSerializer(serializers.ModelSerializer):

@@ -4863,10 +4863,20 @@ class GlobalCompanyMembershipViewSet(viewsets.ModelViewSet):
 # Plans / Limits / Subscription
 # ==========================================================
 
+# Model writes (create/update/delete) on plans, limits and subscriptions are platform-admin only;
+# reads keep their current audience.
+_ADMIN_WRITE_ACTIONS = {"create", "update", "partial_update", "destroy"}
+
+
 class PlanViewSet(viewsets.ModelViewSet):
     queryset = Plan.objects.prefetch_related("limits").all().order_by("tier")
     serializer_class = PlanSerializer
     permission_classes = [AllowAny]  # normalmente el listado de planes es público
+
+    def get_permissions(self):
+        if self.action in _ADMIN_WRITE_ACTIONS:
+            return [IsAuthenticated(), IsPlatformAdmin()]
+        return super().get_permissions()
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="me/limits")
     def my_limits(self, request):
@@ -4902,16 +4912,28 @@ class PlanLimitViewSet(viewsets.ModelViewSet):
     serializer_class = PlanLimitSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_permissions(self):
+        if self.action in _ADMIN_WRITE_ACTIONS:
+            return [IsAuthenticated(), IsPlatformAdmin()]
+        return super().get_permissions()
+
 
 class SubscriptionViewSet(viewsets.ModelViewSet):
     queryset = Subscription.objects.select_related("user", "plan").all()
     serializer_class = SubscriptionSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_permissions(self):
+        # A member may read their own subscription but never change its plan or status:
+        # that is billing, done by a platform admin (or a payment webhook).
+        if self.action in _ADMIN_WRITE_ACTIONS or self.action == "set_plan":
+            return [IsAuthenticated(), IsPlatformAdmin()]
+        return super().get_permissions()
+
     def get_queryset(self):
-        # usuario normal solo ve su subscription; staff/admin ve todas
+        # usuario normal solo ve su subscription; admin de plataforma ve todas
         user = self.request.user
-        if user.is_staff or user.is_superuser:
+        if _is_rbac_admin_user(user):
             return super().get_queryset()
         return super().get_queryset().filter(user=user)
 
@@ -4973,7 +4995,8 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
         """
         POST /api/subscriptions/set-plan/
         Body: { "tier": "free|premium|ultra" }
-        Cambia el plan del usuario (demo/simple). En producción lo maneja Stripe/Paypal webhooks.
+        Cambia el plan del usuario que llama. Solo admin de plataforma (get_permissions):
+        abierto a cualquiera permitía pasarse a un plan de pago gratis.
         """
         raw_tier = (request.data.get("tier") or "")
         storage_tier = PlanGuard.map_requested_tier_to_storage(raw_tier)

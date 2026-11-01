@@ -12,6 +12,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+from api.permissions import IsPlatformAdmin
 from api.throttles import AuthAnonRateThrottle, InvitationUserRateThrottle, with_default_throttles
 
 from rest_framework import status, viewsets
@@ -162,7 +163,8 @@ class InvitationActionViewSet(viewsets.ViewSet):
     # GET /enterprise/invitations/global/ — staff only, all companies
     @action(detail=False, methods=["get"], url_path="global")
     def global_list(self, request):
-        if not request.user.is_staff:
+        # Same rule as the rest of the platform admin area (is_staff, superuser or global "admin" role).
+        if not IsPlatformAdmin().has_permission(request, self):
             raise PermissionDenied("Staff access required.")
 
         company_id = request.query_params.get("company")
