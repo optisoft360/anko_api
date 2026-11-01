@@ -4804,6 +4804,8 @@ class BatteryViewSet(EncryptSelectedActionsMixin,viewsets.ModelViewSet):
         _record_enterprise_battery_completion(
             battery, request.user, total_score, max_score, correct_count, total_questions
         )
+        from api.enterprise.services.knowledge_gap_service import detect_after_attempt
+        transaction.on_commit(lambda: detect_after_attempt(attempt))
 
         return Response(BatteryAttemptSerializer(attempt).data, status=status.HTTP_200_OK)
 

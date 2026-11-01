@@ -11,6 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from api.enterprise.error_handling import company_access_denied
+from api.enterprise.services.rbac_service import has_permission
 from api.enterprise.services.retention_service import RetentionService
 from api.enterprise.services.security_service import validate_company_access
 from api.enterprise.views.learning import EnterpriseViewSetMixin
@@ -238,13 +239,37 @@ class KnowledgeGapViewSet(EnterpriseViewSetMixin, viewsets.ReadOnlyModelViewSet)
             except PermissionError:
                 return KnowledgeGap.objects.none()
             qs = KnowledgeGap.objects.filter(company_id=company_id)
-            if membership.role == "employee":
+            # Roles that manage gaps (owner/admin/manager) see the whole company; everyone else only their own.
+            if not has_permission(membership.role, "enterprise.ent-gaps", "manage"):
                 qs = qs.filter(user=self.request.user)
-            return qs.select_related("user", "team", "topic", "learning_path")
-        return KnowledgeGap.objects.filter(
-            company_id__in=self._user_company_ids(),
-            user=self.request.user,
-        )
+        else:
+            qs = KnowledgeGap.objects.filter(
+                company_id__in=self._user_company_ids(),
+                user=self.request.user,
+            )
+        params = self.request.query_params
+        if params.get("severity"):
+            qs = qs.filter(severity=params["severity"])
+        if params.get("status"):
+            qs = qs.filter(status=params["status"])
+        return qs.select_related("user", "team", "topic", "tag_group", "battery", "learning_path")
+
+    @action(detail=False, methods=["get"])
+    def summary(self, request):
+        """How much there is to analyze: lets the screen tell "no results yet" from "no gaps"."""
+        from api.enterprise.services.knowledge_gap_service import count_analyzable_attempts
+        company_id = self._get_company_id()
+        if not company_id:
+            raise ValidationError({"company_id": "This field is required."})
+        try:
+            membership = validate_company_access(request.user, company_id)
+        except PermissionError as exc:
+            raise PermissionDenied(str(exc))
+        company_wide = has_permission(membership.role, "enterprise.ent-gaps", "manage")
+        return Response({
+            "analyzable_attempts": count_analyzable_attempts(company_id, None if company_wide else request.user.id),
+            "gaps": self.get_queryset().count(),
+        })
 
     @action(detail=False, methods=["get"])
     def open(self, request):
@@ -288,13 +313,9 @@ class KnowledgeGapViewSet(EnterpriseViewSetMixin, viewsets.ReadOnlyModelViewSet)
             raise ValidationError({"company_id": "This field is required."})
         self._require_permission("enterprise.ent-gaps", "manage")
 
-        from api.enterprise_models import Company
-        company = Company.objects.get(id=company_id)
-        gaps = RetentionService.detect_knowledge_gaps(company)
-        return Response({
-            "gaps_detected": len(gaps),
-            "gaps": KnowledgeGapSerializer(gaps, many=True).data,
-        })
+        from api.enterprise.services.knowledge_gap_service import detect_knowledge_gaps
+        result = detect_knowledge_gaps(company_id)
+        return Response({**result, "gaps_detected": result["created"] + result["updated"] + result["reopened"]})
 
 
 # ---------------------------------------------------------------------------

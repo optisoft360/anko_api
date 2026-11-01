@@ -137,11 +137,11 @@ class AnalyticsDashboardViewSet(EnterpriseViewSetMixin, viewsets.ViewSet):
         if not has_permission(membership.role, "enterprise.ent-analytics-health", "view"):
             raise PermissionDenied("Auditor role or higher required.")
 
-        health_score = AnalyticsService.get_company_health_score(company)
+        breakdown = AnalyticsService.get_company_health_breakdown(company)
         return Response(CompanyHealthSerializer({
             "company_id": company.id,
             "company_name": company.name,
-            "health_score": health_score,
+            **breakdown,
         }).data)
 
     # ------------------------------------------------------------------
