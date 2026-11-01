@@ -10029,6 +10029,31 @@ class AdminViewSet(viewsets.GenericViewSet):
             return self.get_paginated_response(AdminBatterySerializer(page, many=True, context={"request": request}).data)
         return Response(AdminBatterySerializer(qs, many=True, context={"request": request}).data)
 
+    @action(detail=False, methods=["get", "patch", "delete"], url_path=r"learning-paths/(?P<item_pk>\d+)")
+    def admin_detail_learning_path(self, request, item_pk=None):
+        """
+        GET    /api/admin/learning-paths/{id}/ — detail (same row as the listing)
+        PATCH  /api/admin/learning-paths/{id}/ — name, description, status only
+        DELETE /api/admin/learning-paths/{id}/
+        """
+        err = self._require_admin(request)
+        if err:
+            return err
+        from api.admin_serializers import get_admin_learning_path_serializer
+        from api.enterprise_learning_models import LearningPath
+        obj = get_object_or_404(LearningPath.objects.select_related("company", "created_by"), pk=item_pk)
+        ser_class = get_admin_learning_path_serializer()
+        if request.method == "DELETE":
+            obj.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        if request.method == "PATCH":
+            data = {k: request.data[k] for k in ("name", "description", "status") if k in request.data}
+            ser = ser_class(obj, data=data, partial=True, context={"request": request})
+            ser.is_valid(raise_exception=True)
+            ser.save()
+            obj.refresh_from_db()
+        return Response(ser_class(obj, context={"request": request}).data)
+
     @action(detail=False, methods=["get"], url_path="learning-paths")
     def admin_list_learning_paths(self, request):
         """GET /api/admin/learning-paths/ — learning paths of every company."""

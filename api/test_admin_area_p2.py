@@ -101,3 +101,21 @@ class PlatformStatsTests(AdminP2Base):
     def test_owner_and_member_denied(self):
         for who in (self.owner, self.user):
             self.assertEqual(self.as_(who).get("/api/admin/platform/stats/").status_code, 403)
+
+
+class AdminLearningPathDetailTests(AdminP2Base):
+    def setUp(self):
+        from api.enterprise_learning_models import LearningPath
+        self.lp = LearningPath.objects.create(company=self.company, name="Onboarding", created_by=self.owner)
+
+    def test_staff_edits_only_allowed_fields_and_deletes(self):
+        c = self.as_(self.staff)
+        r = c.patch(f"/api/admin/learning-paths/{self.lp.id}/", {"name": "Onboarding v2", "status": "published", "company": 999}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.lp.refresh_from_db()
+        self.assertEqual((self.lp.name, self.lp.status, self.lp.company_id), ("Onboarding v2", "published", self.company.id))
+        self.assertEqual(r.data["company_detail"]["name"], "P2 Co")
+        self.assertEqual(c.delete(f"/api/admin/learning-paths/{self.lp.id}/").status_code, 204)
+
+    def test_owner_denied(self):
+        self.assertEqual(self.as_(self.owner).delete(f"/api/admin/learning-paths/{self.lp.id}/").status_code, 403)
