@@ -5019,6 +5019,21 @@ class PlanLimitViewSet(viewsets.ModelViewSet):
             return PlanLimitAdminSerializer  # adds read-only plan_detail
         return super().get_serializer_class()
 
+    @action(detail=False, methods=["get"], url_path="defaults", permission_classes=[IsAuthenticated, IsPlatformAdmin])
+    def defaults(self, request):
+        """
+        GET /api/plan-limits/defaults/ — limits the app enforces and the value it uses per tier when a
+        plan has no PlanLimit row for them. Keys absent here are not read by the app at all.
+        """
+        tiers = list(PlanGuard.PLAN_PROFILES.keys())
+        keys = {}
+        for key, value in PlanGuard.DEFAULTS.items():
+            keys[key] = {"type": "bool" if isinstance(value, bool) else "int", "defaults": {t: value for t in tiers}}
+        for tier, profile in PlanGuard.PLAN_PROFILES.items():
+            for key, value in profile.items():
+                keys.setdefault(key, {"type": "int", "defaults": {}})["defaults"][tier] = value
+        return Response({"keys": keys})
+
     def get_queryset(self):
         return apply_list_params(
             self.request, super().get_queryset(),

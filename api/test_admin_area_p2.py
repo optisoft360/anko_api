@@ -119,3 +119,17 @@ class AdminLearningPathDetailTests(AdminP2Base):
 
     def test_owner_denied(self):
         self.assertEqual(self.as_(self.owner).delete(f"/api/admin/learning-paths/{self.lp.id}/").status_code, 403)
+
+
+class PlanLimitDefaultsTests(AdminP2Base):
+    def test_enforced_keys_and_defaults(self):
+        r = self.as_(self.staff).get("/api/plan-limits/defaults/")
+        self.assertEqual(r.status_code, 200)
+        keys = r.data["keys"]
+        self.assertEqual(keys["questions_per_battery_max"]["defaults"]["ultra"], 50)
+        self.assertEqual(keys["documents_per_month"]["defaults"]["premium"], 100)
+        self.assertEqual(keys["can_invite"]["type"], "bool")
+        self.assertNotIn("ask_questions_per_window", keys)  # seeded but never read by the app
+
+    def test_denied_to_owner(self):
+        self.assertEqual(self.as_(self.owner).get("/api/plan-limits/defaults/").status_code, 403)
