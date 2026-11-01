@@ -135,3 +135,29 @@ class DeniedTests(AdminP1Base):
         self.client.force_authenticate(self.owner)
         for url in ("/api/admin/batteries/", "/api/admin/learning-paths/", "/api/users/", "/api/support-requests/"):
             self.assertEqual(self.client.get(url).status_code, 403, url)
+
+
+class CompanyContentTests(AdminP1Base):
+    """Company batteries/decks have no Project: company and owner come from their process."""
+
+    def test_battery_and_deck_under_a_process_topic(self):
+        from api.enterprise.tests.process_fixtures import make_process_with_generated_topic
+        from api.models import BatterySourceTagGroup, DeckSourceTagGroup
+        _ks, topic, _doc, _section = make_process_with_generated_topic(self.company, self.owner, title="P1 process")
+        battery = Battery.objects.create(name="P1 company battery")
+        BatterySourceTagGroup.objects.create(battery=battery, tag_group=topic)
+        deck = Deck.objects.create(title="P1 company deck", owner=self.owner)
+        DeckSourceTagGroup.objects.create(deck=deck, tag_group=topic)
+
+        bat = rows(self.client.get("/api/admin/batteries/?search=P1 company battery"))[0]
+        self.assertIsNone(bat["project_detail"])
+        self.assertEqual(bat["company_detail"], {"id": self.company.id, "name": "P1 Co"})
+        self.assertEqual(bat["owner_detail"]["username"], "p1_owner")
+        dk = rows(self.client.get("/api/admin/decks/?search=P1 company deck"))[0]
+        self.assertEqual(dk["company_detail"], {"id": self.company.id, "name": "P1 Co"})
+
+    def test_personal_battery_keeps_project_owner_and_no_company(self):
+        self.make_rows(1)
+        bat = rows(self.client.get("/api/admin/batteries/?search=P1 battery 0"))[0]
+        self.assertEqual(bat["owner_detail"]["username"], "p1_u0")
+        self.assertIsNone(bat["company_detail"])

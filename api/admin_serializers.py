@@ -55,13 +55,21 @@ def project_detail(project):
     return {"id": project.id, "title": project.title} if project else None
 
 
+def _company_info(serializer, obj):
+    return (serializer.context.get("company_map") or {}).get(obj.id) or {}
+
+
 class AdminDeckSerializer(DeckListSerializer):
     owner_detail = serializers.SerializerMethodField()
     project_detail = serializers.SerializerMethodField()
     cards_count = serializers.SerializerMethodField()
+    company_detail = serializers.SerializerMethodField()
 
     class Meta(DeckListSerializer.Meta):
-        fields = list(DeckListSerializer.Meta.fields) + ["owner_detail", "project_detail", "cards_count"]
+        fields = list(DeckListSerializer.Meta.fields) + ["owner_detail", "project_detail", "cards_count", "company_detail"]
+
+    def get_company_detail(self, obj):
+        return _company_info(self, obj).get("company")
 
     def get_owner_detail(self, obj):
         return user_detail(obj.owner)
@@ -120,11 +128,12 @@ class AdminBatterySerializer(serializers.ModelSerializer):
     project_detail = serializers.SerializerMethodField()
     rule_detail = serializers.SerializerMethodField()
     owner_detail = serializers.SerializerMethodField()
+    company_detail = serializers.SerializerMethodField()
 
     class Meta:
         model = Battery
         fields = ["id", "name", "status", "difficulty", "visibility", "created_at", "project", "rule", "collection",
-                  "question_count", "project_detail", "rule_detail", "owner_detail"]
+                  "question_count", "project_detail", "rule_detail", "owner_detail", "company_detail"]
         read_only_fields = fields
 
     def get_project_detail(self, obj):
@@ -134,7 +143,13 @@ class AdminBatterySerializer(serializers.ModelSerializer):
         return {"id": obj.rule.id, "name": obj.rule.name} if obj.rule_id else None
 
     def get_owner_detail(self, obj):
-        return user_detail(obj.project.owner) if obj.project_id else None
+        # Batteries have no owner field: the project's owner, else whoever created its company process.
+        if obj.project_id:
+            return user_detail(obj.project.owner)
+        return _company_info(self, obj).get("process_owner")
+
+    def get_company_detail(self, obj):
+        return _company_info(self, obj).get("company")
 
 
 class SubscriptionAdminSerializer(SubscriptionSerializer):

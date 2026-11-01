@@ -63,7 +63,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.authtoken.models import Token
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from api.permissions import IsPlatformAdmin
-from api.admin_listing import apply_list_params
+from api.admin_listing import apply_list_params, company_content_map
 from api.admin_serializers import (
     AdminBatterySerializer, AdminDeckSerializer, AdminFlashcardSerializer, AdminProjectSerializer,
     PlanLimitAdminSerializer, SubscriptionAdminSerializer, SupportRequestAdminSerializer,
@@ -9883,9 +9883,8 @@ class AdminViewSet(viewsets.GenericViewSet):
         )
         page = self.paginate_queryset(qs)
         if page is not None:
-            return self.get_paginated_response(
-                AdminDeckSerializer(page, many=True, context={"request": request}).data
-            )
+            ctx = {"request": request, "company_map": company_content_map("deck", [d.id for d in page])}
+            return self.get_paginated_response(AdminDeckSerializer(page, many=True, context=ctx).data)
         return Response(AdminDeckSerializer(qs, many=True, context={"request": request}).data)
 
     @action(detail=False, methods=["get", "patch", "delete"],
@@ -10026,7 +10025,8 @@ class AdminViewSet(viewsets.GenericViewSet):
         )
         page = self.paginate_queryset(qs)
         if page is not None:
-            return self.get_paginated_response(AdminBatterySerializer(page, many=True, context={"request": request}).data)
+            ctx = {"request": request, "company_map": company_content_map("battery", [b.id for b in page])}
+            return self.get_paginated_response(AdminBatterySerializer(page, many=True, context=ctx).data)
         return Response(AdminBatterySerializer(qs, many=True, context={"request": request}).data)
 
     @action(detail=False, methods=["get", "patch", "delete"], url_path=r"learning-paths/(?P<item_pk>\d+)")
