@@ -5142,7 +5142,7 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
         storage_tier = PlanGuard.map_requested_tier_to_storage(raw_tier)
         if storage_tier is None:
             return Response(
-                {"detail": "tier must be free|premium|ultra"},
+                {"detail": "tier must be free|premium|ultra|business_pilot|business"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

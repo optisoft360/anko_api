@@ -99,6 +99,9 @@ class Plan(models.Model):
         ("free", "Free"),
         ("premium", "Premium"),
         ("ultra", "Ultra"),
+        # Company plans sold on the landing (seed: seed_business_plans).
+        ("business_pilot", "Ankard Business Pilot"),
+        ("business", "Ankard Business"),
     ]
 
     tier = models.CharField(max_length=20, choices=TIER, unique=True)

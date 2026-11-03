@@ -34,6 +34,8 @@ class PlanGuard:
         "free": "free",
         "premium": "premium",
         "ultra": "ultra",
+        "business_pilot": "business_pilot",
+        "business": "business",
     }
 
     PLAN_PROFILES = {
@@ -54,6 +56,23 @@ class PlanGuard:
             "history_days": 90,
         },
         "ultra": {
+            "documents_per_month": 500,
+            "pages_per_document_max": 500,
+            "ask_queries_per_month": 15000,
+            "flashcard_jobs_per_month": 200,
+            "flashcards_per_job_max": 300,
+            "history_days": 365,
+        },
+        # Company plans: Ultra's profile as the base (seed_business_plans stores the same values as rows).
+        "business_pilot": {
+            "documents_per_month": 500,
+            "pages_per_document_max": 500,
+            "ask_queries_per_month": 15000,
+            "flashcard_jobs_per_month": 200,
+            "flashcards_per_job_max": 300,
+            "history_days": 365,
+        },
+        "business": {
             "documents_per_month": 500,
             "pages_per_document_max": 500,
             "ask_queries_per_month": 15000,
@@ -126,7 +145,7 @@ class PlanGuard:
     @staticmethod
     def map_requested_tier_to_storage(raw_tier: str) -> Optional[str]:
         tier = (raw_tier or "").strip().lower()
-        if tier in ("free", "premium", "ultra"):
+        if tier in ("free", "premium", "ultra", "business_pilot", "business"):
             return tier
         return None
 
